@@ -21,6 +21,7 @@ export type DeviceDescriptorDiff = {
 export default class DescriptorStream extends EventEmitter {
     transport: Transport;
     listening: boolean = false;
+    failedToFetchTimestamp: number = 0;
     previous: ?Array<DeviceDescriptor> = null;
     current: Array<DeviceDescriptor> = [];
 
@@ -64,15 +65,25 @@ export default class DescriptorStream extends EventEmitter {
                 return;
             }
 
-            this.current = descriptors;
-            this._reportChanges();
+            this.failedToFetchTimestamp = 0;
 
-            if (this.listening) { // handlers might have called stop()
-                this.listen();
-            }
-            return;
+            this.current = descriptors;
+            this._reportChanges().then(() => {
+                if (this.listening) { // handlers might have called stop()
+                    this.listen();
+                }
+            });
         }).catch(error => {
-            this.errorEvent.emit(error);
+            const ts: number = new Date().getTime();
+            if (error && error.message === 'Failed to fetch' && ts - this.failedToFetchTimestamp > 500) {
+                // Try again. This error could be thrown by fetch API when computer goes to sleep and pending request is cancelled
+                this.failedToFetchTimestamp = ts;
+                if (this.listening) {
+                    this.listen();
+                }
+            } else {
+                this.errorEvent.emit(error);
+            }
         });
     }
 
@@ -123,11 +134,11 @@ export default class DescriptorStream extends EventEmitter {
     }
 
     _reportChanges() {
-        lock(() => {
+        return lock(() => {
             const diff = this._diff(this.previous, this.current);
             this.previous = this.current;
 
-            if (diff.didUpdate) {
+            if (diff.didUpdate && this.listening) {
                 diff.connected.forEach(d => {
                     this.connectEvent.emit(d);
                 });

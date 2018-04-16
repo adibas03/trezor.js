@@ -33,6 +33,9 @@ export type Features = {
     passphrase_cached: boolean;
     needs_backup?: boolean;
     firmware_present?: boolean;
+    flags?: number;
+    model?: string;
+    unfinished_backup?: boolean;
 };
 
 export type ResetDeviceSettings = {
@@ -95,6 +98,10 @@ export type ApplySettings = {
     label?: string;
     use_passphrase?: boolean;
     homescreen?: string;
+};
+
+export type ApplyFlags = {
+    flags?: number;
 };
 
 export type MessageSignature = {

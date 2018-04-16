@@ -7,8 +7,9 @@ import type {DefaultMessageResponse} from '../session';
 import type {Transport} from 'trezor-link';
 import type Session from '../session';
 
-function assertType(res: DefaultMessageResponse, resType: string) {
-    if (res.type !== resType) {
+function assertType(res: DefaultMessageResponse, resTypes: string) {
+    const splitResTypes = resTypes.split('|');
+    if (!(splitResTypes.includes(res.type))) {
         throw new TypeError(`Response of unexpected type: ${res.type}`);
     }
 }
@@ -39,6 +40,9 @@ function filterForLog(type: string, msg: Object): Object {
         DecryptedMessage: {
             message: '(redacted...)',
             address: '(redacted...)',
+        },
+        FirmwareUpload: {
+            payload: '...',
         },
     };
 
@@ -136,9 +140,35 @@ export class CallHelper {
             );
         }
 
+        if (res.type === 'PassphraseStateRequest') {
+            if (this.session.device) {
+                const currentState = this.session.device.passphraseState;
+                const receivedState = res.message.state;
+                if (currentState != null && currentState !== receivedState) {
+                    return Promise.reject(new Error('Device has entered inconsistent state. Please reconnect the device.'));
+                }
+                this.session.device.passphraseState = receivedState;
+                return this._commonCall('PassphraseStateAck', { });
+            }
+            // ??? nowhere to save the state, throwing error
+            return Promise.reject(new Error('Nowhere to save passphrase state.'));
+        }
+
         if (res.type === 'PassphraseRequest') {
+            if (res.message.on_device) {
+                // "fake" button event
+                this.session.buttonEvent.emit('PassphraseOnDevice');
+                if (this.session.device && this.session.device.passphraseState) {
+                    return this._commonCall('PassphraseAck', { state: this.session.device.passphraseState });
+                }
+                return this._commonCall('PassphraseAck', { });
+            }
             return this._promptPassphrase().then(
                 passphrase => {
+                    if (this.session.device && this.session.device.passphraseState) {
+                        return this._commonCall('PassphraseAck', { passphrase: passphrase, state: this.session.device.passphraseState });
+                    }
+
                     return this._commonCall('PassphraseAck', { passphrase: passphrase });
                 },
                 err => {

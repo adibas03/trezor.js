@@ -186,6 +186,19 @@ function deriveOutputScript(
         ? (isScriptHash(pathOrAddress, network) ? 'PAYTOSCRIPTHASH' : 'PAYTOADDRESS')
         : (segwit ? 'PAYTOP2SHWITNESS' : 'PAYTOADDRESS');
 
+    if (typeof pathOrAddress === 'string' && isBech32(pathOrAddress)) {
+        const data = bitcoin.address.fromBech32(pathOrAddress).data;
+        if (scriptType === 'PAYTOADDRESS') {
+            return bitcoin.script.witnessPubKeyHash.output.encode(data);
+        }
+
+        if (scriptType === 'PAYTOSCRIPTHASH') {
+            return bitcoin.script.witnessScriptHash.output.encode(data);
+        }
+
+        throw new Error('Unknown script type ' + scriptType);
+    }
+
     const pkh: Buffer = typeof pathOrAddress === 'string'
         ? bitcoin.address.fromBase58Check(pathOrAddress).hash
         : hdnodeUtils.derivePubKeyHash(
@@ -250,13 +263,32 @@ function verifyBjsTx(
     });
 }
 
-function isScriptHash(address: string, network: bitcoin.Network): boolean {
-    const decoded = bitcoin.address.fromBase58Check(address);
-    if (decoded.version === network.pubKeyHash) {
+function isBech32(address: string): boolean {
+    try {
+        bitcoin.address.fromBech32(address);
+        return true;
+    } catch (e) {
         return false;
     }
-    if (decoded.version === network.scriptHash) {
-        return true;
+}
+
+function isScriptHash(address: string, network: bitcoin.Network): boolean {
+    if (!isBech32(address)) {
+        const decoded = bitcoin.address.fromBase58Check(address);
+        if (decoded.version === network.pubKeyHash) {
+            return false;
+        }
+        if (decoded.version === network.scriptHash) {
+            return true;
+        }
+    } else {
+        const decoded = bitcoin.address.fromBech32(address);
+        if (decoded.data.length === 20) {
+            return false;
+        }
+        if (decoded.data.length === 32) {
+            return true;
+        }
     }
     throw new Error('Unknown address type.');
 }

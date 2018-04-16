@@ -7,7 +7,7 @@ import 'unorm';
 import link from 'trezor-link';
 import DeviceList from './device-list';
 
-const {Bridge, Extension, Lowlevel, WebUsb, Fallback} = link;
+const {BridgeV1, BridgeV2, Extension, Lowlevel, WebUsb, Fallback, Parallel} = link;
 
 export {default as Session} from './session';
 export {default as UnacquiredDevice} from './unacquired-device';
@@ -15,12 +15,12 @@ export {default as Device} from './device';
 export {default as DescriptorStream} from './descriptor-stream';
 export {default as DeviceList} from './device-list';
 
-let sharedWorkerFactory: ?() => ?SharedWorker = () => { throw new Error('WebUsb is not yet enabled.'); };
+let sharedWorkerFactory: ?() => ?SharedWorker = null;
 export function setSharedWorkerFactory(swf: ?() => ?SharedWorker) {
     sharedWorkerFactory = swf;
 }
 
-function sharedWorkerFactoryWrapper() {
+function sharedWorkerFactoryWrap() {
     if (sharedWorkerFactory == null) {
         return null;
     } else {
@@ -28,7 +28,27 @@ function sharedWorkerFactoryWrapper() {
     }
 }
 
-DeviceList._setTransport(() => new Fallback([new Extension(), new Bridge(), new Lowlevel(new WebUsb(), () => sharedWorkerFactoryWrapper())]));
+DeviceList._setNode(false);
+
+DeviceList._setTransport(() => new Fallback([
+    new BridgeV2(),
+    new Parallel({
+        webusb: {
+            transport: new Lowlevel(
+                new WebUsb(),
+                () => sharedWorkerFactoryWrap()
+            ),
+            mandatory: true,
+        },
+        hid: {
+            transport: new Fallback([
+                new Extension(),
+                new BridgeV1(),
+            ]),
+            mandatory: false,
+        },
+    }),
+]));
 
 import {setFetch as installersSetFetch} from './installers';
 DeviceList._setFetch(window.fetch);

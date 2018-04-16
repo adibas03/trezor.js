@@ -51,6 +51,8 @@ export default class Device extends EventEmitter {
     rememberPlaintextPassphrase: boolean = false;
     rememberedPlaintextPasshprase: ?string = null;
 
+    passphraseState: ?string = null;
+
     // First of two "advanced" integrity checks
     // We check whether the xpub that we get from the trezor is
     // the same that *the application* remembers.
@@ -142,7 +144,7 @@ export default class Device extends EventEmitter {
     ): Promise<void> {
         const released = lock(() =>
             promiseFinally(
-                session.release(),
+                session.release(false),
                 (res, error) => {
                     if (error == null) {
                         deviceList.setHard(originalDescriptor.path, null);
@@ -469,17 +471,18 @@ export default class Device extends EventEmitter {
         forwardCallback1(activeSession.wordEvent, this.wordEvent);
         this.forwardPassphrase(activeSession.passphraseEvent);
 
+        const res = await fn(activeSession);
         try {
-            return await fn(activeSession);
-        } finally {
             if (!skipFinalReload) {
                 await this._reloadFeaturesOrInitialize(activeSession);
                 if (this.canSayXpub()) {
                     await this.xpubIntegrityCheck(activeSession);
                 }
             }
+        } finally {
             activeSession.deactivateEvents();
         }
+        return res;
     }
 
     _waitForNullSession(): Promise<?string> {
@@ -641,9 +644,12 @@ export default class Device extends EventEmitter {
         if (currentSession != null) {
             // cannot run .then() in browser; so let's just fire and hope for the best
             if (this.clearSession) {
-                currentSession.clearSession();
+                const model = this.features.model;
+                if (model == null || model !== 'T') {
+                    currentSession.clearSession();
+                }
             }
-            currentSession.release();
+            currentSession.release(true);
         }
     }
 }

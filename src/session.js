@@ -102,14 +102,17 @@ export default class Session extends EventEmitter {
         return this._descriptor.path === descriptor.path;
     }
 
-    release(): Promise<void> {
+    release(onclose: boolean): Promise<void> {
         if (this.debug) {
             console.log('[trezor.js] [session] releasing');
         }
-        return this._transport.release(this._sessionId);
+        return this._transport.release(this._sessionId, onclose);
     }
 
     initialize(): Promise<MessageResponse<trezor.Features>> {
+        if (this.device && this.device.passphraseState) {
+            return this.typedCall('Initialize', 'Features', { state: this.device.passphraseState });
+        }
         return this.typedCall('Initialize', 'Features');
     }
 
@@ -215,6 +218,10 @@ export default class Session extends EventEmitter {
         return this.typedCall('ApplySettings', 'Success', settings);
     }
 
+    applyFlags(flags: number): Promise<MessageResponse<trezor.Success>> {
+        return this.typedCall('ApplyFlags', 'Success', {flags});
+    }
+
     clearSession(settings?: {}): Promise<MessageResponse<trezor.Success>> {
         return this.typedCall('ClearSession', 'Success', settings);
     }
@@ -225,19 +232,40 @@ export default class Session extends EventEmitter {
         });
     }
 
-    eraseFirmware(): Promise<MessageResponse<trezor.Success>> {
-        return this.typedCall('FirmwareErase', 'Success');
+    // payload is in hexa
+    updateFirmware(payload: string): Promise<MessageResponse<trezor.Success>> {
+        const device = this.device;
+        if (device == null) {
+            return Promise.reject(new Error('Cannot determine bootloader version.'));
+        }
+        if (!(device.features.bootloader_mode)) {
+            return Promise.reject(new Error('Device is not in bootloader mode.'));
+        }
+        if (device.features.major_version === 2) {
+            return this._updateFirmwareV2(payload);
+        } else {
+            return this._updateFirmwareV1(payload);
+        }
     }
 
-    // payload is in hexa
-    uploadFirmware(payload: string): Promise<MessageResponse<trezor.Success>> {
-        return this.typedCall('FirmwareUpload', 'Success', {
+    async _updateFirmwareV1(payload: string): Promise<MessageResponse<trezor.Success>> {
+        await this.typedCall('FirmwareErase', 'Success');
+        return await this.typedCall('FirmwareUpload', 'Success', {
             payload: payload,
         });
     }
 
-    updateFirmware(payload: string): Promise<MessageResponse<trezor.Success>> {
-        return this.eraseFirmware().then(() => this.uploadFirmware(payload));
+    async _updateFirmwareV2(payload: string): Promise<MessageResponse<trezor.Success>> {
+        let request = await this.typedCall('FirmwareErase', 'FirmwareRequest', {length: payload.length / 2});
+        while (request.type !== 'Success') {
+            const start = request.message.offset * 2;
+            const end = request.message.offset * 2 + request.message.length * 2;
+            const substring = payload.substring(start, end);
+            request = await this.typedCall('FirmwareUpload', 'FirmwareRequest|Success', {
+                payload: substring,
+            });
+        }
+        return request;
     }
 
     // failure to verify rejects returned promise
@@ -484,6 +512,21 @@ export default class Session extends EventEmitter {
         signature: string;
     }>> {
         return this.typedCall('NEMSignTx', 'NEMSignedTx', transaction);
+    }
+
+    nemDecryptMessage(
+        address_n: Array<number>,
+        network: number,
+        public_key: string,
+        payload: string
+    ): Promise<MessageResponse<{
+    }>> {
+        return this.typedCall('NEMDecryptMessage', 'NEMDecryptedMessage', {
+            address_n: address_n,
+            network: network,
+            public_key: public_key,
+            payload: payload,
+        });
     }
 }
 

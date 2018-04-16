@@ -77,11 +77,11 @@ const BRIDGE_INSTALLERS: Array<ProtoInstallerShort> = [{
 }];
 
 const UDEV_INSTALLERS: Array<ProtoInstallerShort> = [{
-    shortUrl: '/udev/trezor-udev-1-1.noarch.rpm',
+    shortUrl: '/udev/trezor-udev-2-1.noarch.rpm',
     label: 'RPM package',
     platform: ['rpm32', 'rpm64'],
 }, {
-    shortUrl: '/udev/trezor-udev_1_all.deb',
+    shortUrl: '/udev/trezor-udev_2_all.deb',
     label: 'DEB package',
     platform: ['deb32', 'deb64'],
 }];
@@ -115,7 +115,7 @@ type VersionOptions = {
 export function latestVersion(options: ?VersionOptions): Promise<string> {
     const o: VersionOptions = options || {};
     const bridgeUrl: string = o.bridgeUrl || BRIDGE_VERSION_URL;
-    return _fetch(bridgeUrl)
+    return _fetch(bridgeUrl, {credentials: 'same-origin'})
         .then(response => {
             return response.ok
                 ? response.text()

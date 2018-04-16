@@ -4,7 +4,7 @@
 import * as bitcoin from 'bitcoinjs-lib-zcash';
 
 import {EventEmitter} from './events';
-import {Event1, Event2} from './flow-events';
+import {Event0, Event1, Event2} from './flow-events';
 import DescriptorStream from './descriptor-stream';
 import Device from './device';
 import UnacquiredDevice from './unacquired-device';
@@ -70,6 +70,11 @@ export default class DeviceList extends EventEmitter {
         DeviceList.defaultTransport = t;
     }
 
+    static node: boolean;
+    static _setNode(node: boolean) {
+        DeviceList.node = node;
+    }
+
     options: DeviceListOptions;
     transport: ?Transport;
     transportLoading: boolean = true;
@@ -93,6 +98,8 @@ export default class DeviceList extends EventEmitter {
     disconnectUnacquiredEvent: Event1<UnacquiredDevice> = new Event1('disconnectUnacquired', this);
     updateEvent: Event1<DeviceDescriptorDiff> = new Event1('update', this);
 
+    unreadableHidDeviceChange: Event0 = new Event0('unreadableHidDevice', this);
+
     requestNeeded: boolean;
     xpubDerive: (xpub: string, network: bitcoin.Network, index: number) => Promise<string>;
 
@@ -108,6 +115,7 @@ export default class DeviceList extends EventEmitter {
             this.requestNeeded = transport.requestNeeded;
 
             this._initStream(transport);
+            this._setUnreadableHidDeviceChange();
         });
 
         this.streamEvent.on(stream => {
@@ -199,6 +207,9 @@ export default class DeviceList extends EventEmitter {
 
     _initTransport() {
         const transport = this.options.transport ? this.options.transport : DeviceList.defaultTransport();
+        if (this.options.bridgeVersionUrl != null) {
+            transport.setBridgeLatestUrl(this.options.bridgeVersionUrl);
+        }
         if (this.options.debugInfo) {
             console.log('[trezor.js] [device list] Initializing transports');
         }
@@ -481,8 +492,75 @@ export default class DeviceList extends EventEmitter {
         });
     }
 
+    _setUnreadableHidDeviceChange(): void {
+        if (DeviceList.node) {
+            return;
+        }
+        try {
+            const transport = this.transport;
+            if (transport == null) {
+                return;
+            }
+            // $FlowIssue - this all is going around Flow :/
+            const activeTransport = transport.activeTransport;
+            if (activeTransport == null || activeTransport.name !== 'ParallelTransport') {
+                return;
+            }
+            const webusbTransport = activeTransport.workingTransports['webusb'];
+            if (webusbTransport == null) {
+                return;
+            }
+            // one of the HID fallbacks are working -> do not display the message
+            const hidTransport = activeTransport.workingTransports['hid'];
+            if (hidTransport != null) {
+                return;
+            }
+            return webusbTransport.plugin.unreadableHidDeviceChange.on('change', () => this.unreadableHidDeviceChange.emit('change'));
+        } catch (e) {
+            return;
+        }
+    }
+
+    unreadableHidDevice(): boolean {
+        if (DeviceList.node) {
+            return false;
+        }
+        try {
+            const transport = this.transport;
+            if (transport == null) {
+                return false;
+            }
+            // $FlowIssue - this all is going around Flow :/
+            const activeTransport = transport.activeTransport;
+            if (activeTransport == null || activeTransport.name !== 'ParallelTransport') {
+                return false;
+            }
+            const webusbTransport = activeTransport.workingTransports['webusb'];
+            if (webusbTransport == null) {
+                return false;
+            }
+            // one of the HID fallbacks are working -> do not display the message
+            const hidTransport = activeTransport.workingTransports['hid'];
+            if (hidTransport != null) {
+                return false;
+            }
+            return webusbTransport.plugin.unreadableHidDevice;
+        } catch (e) {
+            return false;
+        }
+    }
+
     onbeforeunload(clearSession?: ?boolean) {
         this.asArray().forEach(device => device.onbeforeunload(clearSession));
+        // some weird issue on chrome on mac makes the window alive
+        // even after closing
+        // we need to stop the stream
+        if (this.stream != null) {
+            this.stream.stop();
+        }
+        if (this.transport != null) {
+            this.transport.stop();
+        }
     }
 }
 
